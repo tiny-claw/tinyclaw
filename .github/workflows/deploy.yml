@@ -1,0 +1,90 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["Build"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy. Leave empty to use triggering commit SHA."
+        required: false
+        type: string
+
+jobs:
+  deploy-claw:
+    name: Deploy To K8s Claw
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main') ||
+      (github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Connect tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Set kube context
+        uses: azure/k8s-set-context@v4
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+          context: default
+
+      - name: Verify cluster access
+        run: kubectl cluster-info
+
+      - name: Ensure namespace claw
+        run: kubectl apply -f k8s/namespace.yaml
+
+      - name: Apply runtime secret
+        env:
+          REDIS_ADDR: ${{ secrets.REDIS_ADDR }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          STREAM_PREFIX: ${{ secrets.STREAM_PREFIX }}
+          WECOM_CORP_ID: ${{ secrets.WECOM_CORP_ID }}
+          WECOM_CORP_SECRET: ${{ secrets.WECOM_CORP_SECRET }}
+          WECOM_RSA_PRIVATE_KEY: ${{ secrets.WECOM_RSA_PRIVATE_KEY }}
+          WECOM_SEQ_KEY: ${{ secrets.WECOM_SEQ_KEY }}
+        run: |
+          : "${REDIS_ADDR:=redis:6379}"
+          : "${STREAM_PREFIX:=stream:group}"
+          : "${WECOM_SEQ_KEY:=msg:seq}"
+          kubectl -n claw create secret generic tinyclaw-env \
+            --from-literal=REDIS_ADDR="${REDIS_ADDR}" \
+            --from-literal=REDIS_PASSWORD="${REDIS_PASSWORD}" \
+            --from-literal=STREAM_PREFIX="${STREAM_PREFIX}" \
+            --from-literal=WECOM_CORP_ID="${WECOM_CORP_ID}" \
+            --from-literal=WECOM_CORP_SECRET="${WECOM_CORP_SECRET}" \
+            --from-literal=WECOM_RSA_PRIVATE_KEY="${WECOM_RSA_PRIVATE_KEY}" \
+            --from-literal=WECOM_SEQ_KEY="${WECOM_SEQ_KEY}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Apply deployment
+        run: kubectl apply -f k8s/deployment.yaml
+
+      - name: Update image
+        env:
+          DEFAULT_IMAGE_TAG: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          MANUAL_IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_tag || '' }}
+        run: |
+          IMAGE_TAG="${MANUAL_IMAGE_TAG:-$DEFAULT_IMAGE_TAG}"
+          IMAGE_REF="ghcr.io/${{ github.repository_owner }}/tinyclaw:${IMAGE_TAG}"
+          kubectl -n claw set image deployment/clawman clawman="${IMAGE_REF}"
+
+      - name: Wait rollout
+        run: kubectl -n claw rollout status deployment/clawman --timeout=300s

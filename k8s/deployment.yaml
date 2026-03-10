@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clawman
+  namespace: claw
+  labels:
+    app: clawman
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: clawman
+  template:
+    metadata:
+      labels:
+        app: clawman
+    spec:
+      containers:
+        - name: clawman
+          image: ghcr.io/fishioon/tinyclaw:latest
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: tinyclaw-env
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
