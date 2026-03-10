@@ -115,7 +115,7 @@ func (r *Clawman) pullAndDispatch(ctx context.Context, seq, limit int64) (int64,
 			continue
 		}
 
-		stream := streamKey(r.cfg.StreamPrefix, &msg)
+		stream := streamKey(r.cfg.StreamPrefix, r.cfg.WeComBotUserID, &msg)
 		if err := r.redis.XAdd(ctx, &redis.XAddArgs{
 			Stream: stream,
 			Values: streamValues(msg),
@@ -138,14 +138,16 @@ func streamValues(msg WeComMessage) map[string]any {
 	}
 }
 
-func streamKey(prefix string, msg *WeComMessage) string {
-	roomID := msg.RoomID
+func streamKey(prefix, botUserID string, msg *WeComMessage) string {
+	sessionKey := msg.RoomID
 	if msg.RoomID == "" {
-		from, to := msg.From, msg.ToList[0]
-		if from > to {
-			from, to = to, from
+		// Private chat: session_key = the other user's ID.
+		// If botUserID is configured, use the non-bot side; otherwise fall back to sender.
+		if botUserID != "" && msg.From == botUserID && len(msg.ToList) > 0 {
+			sessionKey = msg.ToList[0]
+		} else {
+			sessionKey = msg.From
 		}
-		roomID = from + "-" + to
 	}
-	return prefix + ":" + roomID
+	return prefix + ":" + sessionKey
 }

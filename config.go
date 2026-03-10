@@ -21,6 +21,7 @@ type Config struct {
 	WeComCorpSecret  string
 	WeComPrivateKey  string
 	WeComSeqKey      string
+	WeComBotUserID   string
 }
 
 func LoadConfig() (Config, error) {
@@ -40,6 +41,7 @@ func LoadConfig() (Config, error) {
 		WeComCorpSecret: os.Getenv("WECOM_CORP_SECRET"),
 		WeComPrivateKey: os.Getenv("WECOM_RSA_PRIVATE_KEY"),
 		WeComSeqKey:     envOrDefault("WECOM_SEQ_KEY", defaultWeComSeqKey),
+		WeComBotUserID:  os.Getenv("WECOM_BOT_USER_ID"),
 	}
 
 	return cfg, nil
